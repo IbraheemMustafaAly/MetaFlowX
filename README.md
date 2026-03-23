@@ -37,6 +37,113 @@ Install the following tools:
 
 ---
 
+## ⚙️ Installation & Environment Setup
+
+To ensure reproducibility, we recommend using Miniconda to manage all dependencies.
+
+---
+
+### 🧪 1. Install Miniconda
+
+Download and install Miniconda:
+
+```bash
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh
+```
+
+Then restart your terminal or run:
+
+```bash
+source ~/.bashrc
+```
+
+---
+
+### 🧬 2. Create Conda Environment
+
+```bash
+conda create -n metagenomics_env python=3.10 -y
+conda activate metagenomics_env
+```
+
+---
+
+### 📦 3. Install Required Tools
+
+> Use bioconda + conda-forge channels (recommended for bioinformatics tools)
+
+```bash
+conda config --add channels defaults
+conda config --add channels conda-forge
+conda config --add channels bioconda
+```
+
+---
+
+### 🔧 Core Tools Installation
+
+```bash
+conda install -y \
+fastqc \
+multiqc \
+seqprep \
+trimmomatic \
+seqkit \
+bedtools \
+infernal \
+kraken2 \
+krona
+```
+
+---
+
+### 📊 Install Krona Database
+
+```bash
+ktUpdateTaxonomy.sh
+```
+
+---
+
+### 🧬 Optional: Install FragGeneScan
+
+FragGeneScan is not always available via conda, so install manually:
+
+```bash
+git clone https://github.com/gateslab/FragGeneScan.git
+cd FragGeneScan
+make
+```
+
+---
+
+### 🧠 Alternative (System Installation)
+
+If conda is not available:
+
+```bash
+apt-get update
+apt-get install -y bedtools fastqc
+```
+
+---
+
+## 📌 Notes
+
+* Always activate the environment before running the pipeline:
+
+```bash
+conda activate metagenomics_env
+```
+
+* Using conda ensures compatibility across systems and avoids dependency conflicts.
+
+* This setup is aligned with workflows similar to MGnify pipeline v5.
+
+---
+
+
 ## 📁 Input
 
 Paired-end FASTQ files:
