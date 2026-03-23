@@ -1,6 +1,6 @@
 # 🧬 Metagenomics Analysis Pipeline
 
-A complete, end-to-end metagenomics pipeline for preprocessing, rRNA removal, and gene prediction from raw sequencing data.
+A production-ready, modular metagenomics pipeline for preprocessing, rRNA removal, gene prediction, and taxonomic visualization using Krona.
 
 ---
 
@@ -8,19 +8,20 @@ A complete, end-to-end metagenomics pipeline for preprocessing, rRNA removal, an
 
 This pipeline performs:
 
-1. Read merging (paired-end)
+1. Paired-end read merging
 2. Quality control (FastQC & MultiQC)
-3. Adapter trimming (Trimmomatic)
+3. Adapter and quality trimming
 4. FASTQ → FASTA conversion
 5. rRNA detection & masking (Infernal + Rfam)
-6. Extraction of non-coding regions
-7. Gene prediction (FragGeneScan)
+6. Gene prediction (FragGeneScan)
+7. Taxonomic classification (Kraken2)
+8. Interactive visualization (Krona)
 
 ---
 
 ## ⚙️ Requirements
 
-Make sure the following tools are installed:
+Install the following tools:
 
 * SeqPrep
 * FastQC
@@ -30,183 +31,224 @@ Make sure the following tools are installed:
 * Infernal (cmsearch)
 * Bedtools
 * FragGeneScan
+* Kraken2
+* KronaTools
 * wget
 
 ---
 
-## 📁 Input Files
+## 📁 Input
 
-* Paired-end reads:
+Paired-end FASTQ files:
 
-  * `*_1.fastq`
-  * `*_2.fastq`
+```
+*_1.fastq
+*_2.fastq
+```
 
-Example:
-subset_SRR5903366_1.fastq
-subset_SRR5903366_2.fastq
+---
+
+## 📁 Recommended Project Structure
+
+```
+metagenomics-pipeline/
+│
+├── data/
+├── results/
+│   ├── qc/
+│   ├── trimmed/
+│   ├── fasta/
+│   ├── rrna/
+│   ├── genes/
+│   ├── taxonomy/
+│   │   ├── kraken/
+│   │   └── krona/
+│
+├── databases/
+│   ├── kraken_db/
+│   └── rfam/
+│
+├── scripts/
+│   └── pipeline.sh
+│
+└── README.md
+```
 
 ---
 
 ## 🚀 Full Pipeline Script
 
-
-# 1. Merge Paired-End Reads
 ```bash
-for R1 in *1.fastq; do
+##############################################
+# CONFIG
+##############################################
+THREADS=8
+SAMPLE="sample_SRR5903366"
+
+mkdir -p results/{qc,trimmed,fasta,rrna,genes,taxonomy/kraken,taxonomy/krona}
+```
+
+# 1. Merge Reads
+```
+for R1 in *_1.fastq; do
   R2="${R1%_1.fastq}_2.fastq"
+
   SeqPrep -f $R1 -r $R2 \
-    -1 "unmerged_${R1}" \
-    -2 "unmerged_${R2}" \
-    -s "${R1%_1.fastq}_merged.gz"
+    -1 results/trimmed/unmerged_${R1} \
+    -2 results/trimmed/unmerged_${R2} \
+    -s results/trimmed/${R1%_1.fastq}_merged.gz
 done
 ```
 
 
-# 2. Quality Control (Before Trimming)
-```bash
-for i in *merged.gz; do
-  fastqc $i
-done
-
-multiqc ./
+# 2. QC (Pre-trimming)
+```
+fastqc results/trimmed/*merged.gz -o results/qc/
+multiqc results/qc/ -o results/qc/
 ```
 
-
-# 3. Adapter Trimming
-```bash
-for i in *merged.gz; do
+# 3. Trimming
+```
+for i in results/trimmed/*merged.gz; do
   trimmomatic SE -phred33 $i ${i%.gz}_trimmed.fq.gz \
-    ILLUMINACLIP:./adaptor.fa:2:30:10 \
+    ILLUMINACLIP:adaptor.fa:2:30:10 \
     LEADING:3 TRAILING:3 \
     SLIDINGWINDOW:4:15 MINLEN:36
 done
 ```
 
+# 4. QC (Post-trimming)
+```
+fastqc results/trimmed/*trimmed.fq.gz -o results/qc/
+```
 
+# 5. FASTQ → FASTA
+```
+gunzip results/trimmed/*trimmed.fq.gz
 
-# 4. Quality Control (After Trimming)
-```bash
-for i in *trimmed.fq.gz; do
-  fastqc $i
+for i in results/trimmed/*trimmed.fq; do
+  seqkit fq2fa $i > results/fasta/$(basename ${i%.fq}.fa)
 done
 ```
 
+# 6. Download Rfam (once)
+```
+mkdir -p databases/rfam
 
+wget -P databases/rfam \
+ftp://ftp.ebi.ac.uk/pub/databases/metagenomics/pipeline-5.0/ref-dbs/rfam_models/ribosomal_models/ribo.cm
+```
 
-# 5. Convert FASTQ → FASTA
-```bash
-gunzip ./*trimmed.fq.gz
+# 7. rRNA Detection
+```
+for fa in results/fasta/*.fa; do
+  base=$(basename $fa .fa)
 
-for i in *trimmed.fq; do
-  seqkit fq2fa $i > ${i%.fq}.fa
+  cmsearch --tblout results/rrna/${base}.tbl \
+    databases/rfam/ribo.cm \
+    $fa
 done
 ```
 
-
-# 6. Download rRNA Models (Rfam)
-```bash
-mkdir ribsome
-
-wget "ftp://ftp.ebi.ac.uk/pub/databases/metagenomics/pipeline-5.0/ref-dbs/rfam_models/other_models/*.cm" \
-  -P ribsome
-
-cd ribsome
-
-wget ftp://ftp.ebi.ac.uk/pub/databases/metagenomics/pipeline-5.0/ref-dbs/rfam_models/ribosomal_models/ribo.cm
+# 8. Convert to BED
 ```
-
-
-# 7. Prepare Sample Directory
-```bash
-mkdir ./../sample_SRR5903366
-
-mv ./../*_trimmed.fa ./../sample_SRR5903366/
-```
-
-
-# 8. rRNA Detection using cmsearch
-```bash
-cmsearch --tblout ./../sample_SRR5903366/ribo.cm.tbl \
-  ./ribo.cm \
-  ./../sample_SRR5903366/*.fa
-
-for i in *.cm; do
-  cmsearch --tblout ./../sample_SRR5903366/$i.tbl \
-    $i \
-    ./../sample_SRR5903366/*.fa
-done
-```
-
-
-# 9. Convert cmsearch Output → BED
-```bash
-cd ..
-for tbl_file in sample_SRR5903366/*.tbl; do
+for tbl in results/rrna/*.tbl; do
   awk '/^[^#]/ {
     if ($8 > $9) {
       print $1 "\t" $9-1 "\t" $8
     } else {
       print $1 "\t" $8-1 "\t" $9
     }
-  }' "$tbl_file" >> sample_SRR5903366/combined.bed
+  }' $tbl >> results/rrna/combined.bed
 done
 ```
 
+# 9. Mask rRNA
+```
+for fa in results/fasta/*.fa; do
+  base=$(basename $fa .fa)
 
-# 10. Mask rRNA Regions
-```bash
-bedtools maskfasta \
-  -fi sample_SRR5903366/*.fa \
-  -bed sample_SRR5903366/combined.bed \
-  -fo sample_SRR5903366/masked_output.fasta
+  bedtools maskfasta \
+    -fi $fa \
+    -bed results/rrna/combined.bed \
+    -fo results/rrna/${base}_masked.fasta
+done
 ```
 
+# 10. Gene Prediction
+```
+for fa in results/rrna/*_masked.fasta; do
+  base=$(basename $fa _masked.fasta)
 
-# 11. Extract rRNA (Non-coding regions)
-```bash
-bedtools getfasta \
-  -fi sample_SRR5903366/*.fa \
-  -bed sample_SRR5903366/combined.bed \
-  -fo sample_SRR5903366/noncoding_output.fasta
+  FragGeneScan -s $fa \
+    -o results/genes/${base} \
+    -w 0 -t complete
+done
 ```
 
+# 11. Taxonomy (Kraken2)
+```
+# Run (database should be pre-built)
+for fa in results/rrna/*_masked.fasta; do
+  base=$(basename $fa _masked.fasta)
 
-# 12. Gene Prediction (FragGeneScan)
-```bash
-./FragGeneScan -s sample_SRR5903366/masked_output.fasta \
-  -o sample_SRR5903366/predicted_genes \
-  -w 0 -t complete
+  kraken2 \
+    --db databases/kraken_db \
+    --threads $THREADS \
+    --report results/taxonomy/kraken/${base}.report \
+    --output results/taxonomy/kraken/${base}.out \
+    $fa
+done
 ```
 
+# 12. Krona Visualization
+```
+for file in results/taxonomy/kraken/*.out; do
+  base=$(basename $file .out)
 
-# ✅ Pipeline Finished
+  cut -f2,3 $file > results/taxonomy/krona/${base}.txt
+
+  ktImportTaxonomy \
+    results/taxonomy/krona/${base}.txt \
+    -o results/taxonomy/krona/${base}.html
+done
+```
+
+# ✅ DONE
 
 
 
 ---
 
-## 📊 Output Files
+## 📊 Outputs
 
-| Step            | Output                 |
-| --------------- | ---------------------- |
-| QC Reports      | FastQC + MultiQC       |
-| Trimmed Reads   | *_trimmed.fq           |
-| FASTA Files     | *.fa                   |
-| rRNA Regions    | combined.bed           |
-| Masked Genome   | masked_output.fasta    |
-| Non-coding RNA  | noncoding_output.fasta |
-| Predicted Genes | predicted_genes        |
+| Category      | Output              |
+| ------------- | ------------------- |
+| QC            | FastQC + MultiQC    |
+| Trimmed reads | *.fq                |
+| FASTA         | *.fa                |
+| rRNA masked   | *_masked.fasta      |
+| Genes         | FragGeneScan output |
+| Taxonomy      | Kraken reports      |
+| Visualization | Krona HTML          |
 
 ---
 
 ## 🧠 Notes
 
-* This pipeline removes rRNA contamination using Rfam models.
-* FragGeneScan is optimized for error-prone reads (ideal for metagenomics).
-* You can extend this pipeline with:
+* rRNA removal is based on Rfam models (Infernal).
+* Kraken2 provides fast taxonomic classification.
+* Krona generates interactive hierarchical visualizations.
+* Pipeline structure is inspired by the EMBL-EBI MGnify pipeline.
 
-  * Taxonomic classification (Kraken2 / MetaPhlAn)
-  * Functional annotation (PROKKA / eggNOG)
+---
+
+## 🔥 Future Extensions
+
+* Assembly (MEGAHIT / metaSPAdes)
+* Functional annotation (eggNOG / PROKKA)
+* Abundance estimation (Bracken)
+* Pathway analysis (HUMAnN)
 
 ---
 
