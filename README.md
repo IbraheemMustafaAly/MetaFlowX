@@ -1,99 +1,232 @@
-# 🧬 MetaFlowX – Metagenomics Bash Pipeline
+# 🧬 Metagenomics Analysis Pipeline
 
-![Status](https://img.shields.io/badge/status-active-success)
-![Level](https://img.shields.io/badge/level-beginner%20to%20advanced-blue)
-![Focus](https://img.shields.io/badge/focus-hands--on-brightgreen)
-![Platform](https://img.shields.io/badge/platform-linux-lightgrey)
+A complete, end-to-end metagenomics pipeline for preprocessing, rRNA removal, and gene prediction from raw sequencing data.
 
 ---
 
-### Beginner → Advanced | Code-Driven Metagenomics
+## 📂 Workflow Overview
 
-This repository provides a **step-by-step, hands-on metagenomics workflow**  
-designed for **absolute beginners** and biology students transitioning into computational analysis.
+This pipeline performs:
 
-All steps are written as **terminal commands**, following the style of real bioinformatics workshops.
-
-> ⚠️ This is **not a lecture-based course**.  
-> This is a **run-the-code, understand-the-output** roadmap.
-
----
-
-## Table of Contents
-
-1. [Setup & Installation](#1-setup--installation)
-2. [NGS Data Overview](#2-ngs-data-overview)
-3. [Quality Control](#3-quality-control)
-4. [Read Merging & Trimming](#4-read-merging--trimming)
-5. [rRNA Masking](#5-rrna-masking)
-6. [CDS Prediction](#6-cds-prediction)
-7. [Optional: Taxonomic Classification](#7-optional-taxonomic-classification)
-8. [Final Notes](#8-final-notes)
+1. Read merging (paired-end)
+2. Quality control (FastQC & MultiQC)
+3. Adapter trimming (Trimmomatic)
+4. FASTQ → FASTA conversion
+5. rRNA detection & masking (Infernal + Rfam)
+6. Extraction of non-coding regions
+7. Gene prediction (FragGeneScan)
 
 ---
 
-## 1. Setup & Installation
+## ⚙️ Requirements
 
-### 1.1 Linux Basic Commands
+Make sure the following tools are installed:
 
+* SeqPrep
+* FastQC
+* MultiQC
+* Trimmomatic
+* SeqKit
+* Infernal (cmsearch)
+* Bedtools
+* FragGeneScan
+* wget
+
+---
+
+## 📁 Input Files
+
+* Paired-end reads:
+
+  * `*_1.fastq`
+  * `*_2.fastq`
+
+Example:
+subset_SRR5903366_1.fastq
+subset_SRR5903366_2.fastq
+
+---
+
+## 🚀 Full Pipeline Script
+
+##############################################
+# 1. Merge Paired-End Reads
+##############################################
 ```bash
-  pwd
-  ls
-  mkdir metagenomics_pipeline
-  cd metagenomics_pipeline
+for R1 in *1.fastq; do
+  R2="${R1%_1.fastq}_2.fastq"
+  SeqPrep -f $R1 -r $R2 \
+    -1 "unmerged_${R1}" \
+    -2 "unmerged_${R2}" \
+    -s "${R1%_1.fastq}_merged.gz"
+done
+```
 
-----
+##############################################
+# 2. Quality Control (Before Trimming)
+##############################################
+```bash
+for i in *merged.gz; do
+  fastqc $i
+done
 
-#1.2 Install Miniconda
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh
-source ~/.bashrc
-1.3 Configure Conda Channels
-conda config --add channels defaults
-conda config --add channels conda-forge
-conda config --add channels bioconda
-conda config --set channel_priority strict
-2. NGS Data Overview
-2.1 Inspect FASTQ File
-zcat sample_R1.fastq.gz | head
+multiqc ./
+```
 
-Observe:
+##############################################
+# 3. Adapter Trimming
+##############################################
+```bash
 
-Read identifier
-DNA sequence
-Phred quality scores
-3. Quality Control
-3.1 Install QC Tools
-conda create -n qc_env fastqc multiqc -y
-conda activate qc_env
-3.2 Run FastQC
-fastqc *.fastq.gz
-3.3 Generate MultiQC Report
-multiqc .
-4. Read Merging & Trimming
-4.1 Merge Paired-End Reads
-SeqPrep -f sample_1.fastq -r sample_2.fastq -s merged.fastq.gz
-4.2 Trim Reads
-trimmomatic SE -phred33 merged.fastq.gz \
-    trimmed_output.fq.gz \
-    ILLUMINACLIP:adaptor.fa:2:30:10 \
-    LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36
-4.3 Convert to FASTA
-seqkit fq2fa trimmed_output.fq.gz > sample.fa
-5. rRNA Masking
-5.1 Download rRNA Models
+for i in *merged.gz; do
+  trimmomatic SE -phred33 $i ${i%.gz}_trimmed.fq.gz \
+    ILLUMINACLIP:./adaptor.fa:2:30:10 \
+    LEADING:3 TRAILING:3 \
+    SLIDINGWINDOW:4:15 MINLEN:36
+done
+```
+
+
+##############################################
+# 4. Quality Control (After Trimming)
+##############################################
+```bash
+for i in *trimmed.fq.gz; do
+  fastqc $i
+done
+```
+
+
+##############################################
+# 5. Convert FASTQ → FASTA
+##############################################
+```bash
+gunzip ./*trimmed.fq.gz
+
+for i in *trimmed.fq; do
+  seqkit fq2fa $i > ${i%.fq}.fa
+done
+```
+
+##############################################
+# 6. Download rRNA Models (Rfam)
+##############################################
+```bash
 mkdir ribsome
-wget ftp://ftp.ebi.ac.uk/pub/databases/metagenomics/pipeline-5.0/ref-dbs/rfam_models/ribosomal_models/ribo.cm -P ribsome
-5.2 Run cmsearch
-cmsearch --tblout SRR_ribo.tbl ribsome/ribo.cm sample.fa
-5.3 Convert to BED & Mask rRNA
-awk '/^[^#]/ {if ($8>$9){print $1 "\t"$9-1 "\t"$8}else{print $1 "\t"$8-1 "\t"$9}}' SRR_ribo.tbl > bed_extracted.bed
-bedtools maskfasta -fi sample.fa -bed bed_extracted.bed -fo masked_output.fasta
-6. CDS Prediction
-./FragGeneScan-master/FragGeneScan -s masked_output.fasta -o cds.fa -w 0 -t complete
-7. Optional: Taxonomic Classification
-Using Kraken2
-kraken2 --paired sample_1.fastq sample_2.fastq \
-        --db /path/to/kraken2_db \
-        --output kraken_output.txt \
-        --report kraken_report.txt
+
+wget "ftp://ftp.ebi.ac.uk/pub/databases/metagenomics/pipeline-5.0/ref-dbs/rfam_models/other_models/*.cm" \
+  -P ribsome
+
+cd ribsome
+
+wget ftp://ftp.ebi.ac.uk/pub/databases/metagenomics/pipeline-5.0/ref-dbs/rfam_models/ribosomal_models/ribo.cm
+```
+
+##############################################
+# 7. Prepare Sample Directory
+##############################################
+```bash
+mkdir ./../sample_SRR5903366
+
+mv ./../*_trimmed.fa ./../sample_SRR5903366/
+```
+
+##############################################
+# 8. rRNA Detection using cmsearch
+##############################################
+```bash
+cmsearch --tblout ./../sample_SRR5903366/ribo.cm.tbl \
+  ./ribo.cm \
+  ./../sample_SRR5903366/*.fa
+
+for i in *.cm; do
+  cmsearch --tblout ./../sample_SRR5903366/$i.tbl \
+    $i \
+    ./../sample_SRR5903366/*.fa
+done
+```
+
+##############################################
+# 9. Convert cmsearch Output → BED
+##############################################
+```bash
+cd ..
+
+for tbl_file in sample_SRR5903366/*.tbl; do
+  awk '/^[^#]/ {
+    if ($8 > $9) {
+      print $1 "\t" $9-1 "\t" $8
+    } else {
+      print $1 "\t" $8-1 "\t" $9
+    }
+  }' "$tbl_file" >> sample_SRR5903366/combined.bed
+done
+```
+
+##############################################
+# 10. Mask rRNA Regions
+##############################################
+```bash
+bedtools maskfasta \
+  -fi sample_SRR5903366/*.fa \
+  -bed sample_SRR5903366/combined.bed \
+  -fo sample_SRR5903366/masked_output.fasta
+```
+
+##############################################
+# 11. Extract rRNA (Non-coding regions)
+##############################################
+```bash
+bedtools getfasta \
+  -fi sample_SRR5903366/*.fa \
+  -bed sample_SRR5903366/combined.bed \
+  -fo sample_SRR5903366/noncoding_output.fasta
+```
+
+##############################################
+# 12. Gene Prediction (FragGeneScan)
+##############################################
+```bash
+./FragGeneScan -s sample_SRR5903366/masked_output.fasta \
+  -o sample_SRR5903366/predicted_genes \
+  -w 0 -t complete
+```
+
+##############################################
+# ✅ Pipeline Finished
+##############################################
+
+
+---
+
+## 📊 Output Files
+
+| Step            | Output                 |
+| --------------- | ---------------------- |
+| QC Reports      | FastQC + MultiQC       |
+| Trimmed Reads   | *_trimmed.fq           |
+| FASTA Files     | *.fa                   |
+| rRNA Regions    | combined.bed           |
+| Masked Genome   | masked_output.fasta    |
+| Non-coding RNA  | noncoding_output.fasta |
+| Predicted Genes | predicted_genes        |
+
+---
+
+## 🧠 Notes
+
+* This pipeline removes rRNA contamination using Rfam models.
+* FragGeneScan is optimized for error-prone reads (ideal for metagenomics).
+* You can extend this pipeline with:
+
+  * Taxonomic classification (Kraken2 / MetaPhlAn)
+  * Functional annotation (PROKKA / eggNOG)
+
+---
+
+## 📌 Author
+
+**Ibraheem Mustafa Aly**
+Bioinformatics & Metagenomics Researcher
+
+---
