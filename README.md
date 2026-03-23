@@ -1,4 +1,4 @@
-# 🧬 Metagenomics Analysis Pipeline
+# 🧬 MetaFlowX - Metagenomics Analysis Pipeline
 
 A production-ready, modular metagenomics pipeline for preprocessing, rRNA removal, gene prediction, and taxonomic visualization using Krona.
 
