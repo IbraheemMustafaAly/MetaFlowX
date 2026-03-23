@@ -78,10 +78,10 @@ metagenomics-pipeline/
 
 ## 🚀 Full Pipeline Script
 
-```bash
-##############################################
+
+
 # CONFIG
-##############################################
+```
 THREADS=8
 SAMPLE="sample_SRR5903366"
 
